@@ -2,6 +2,15 @@ package org.example.user.repository.training.repository;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import liquibase.Liquibase;
+import liquibase.database.Database;
+import liquibase.database.DatabaseFactory;
+import liquibase.database.jvm.JdbcConnection;
+import liquibase.exception.LiquibaseException;
+import liquibase.resource.ClassLoaderResourceAccessor;
+import liquibase.resource.DirectoryResourceAccessor;
+import liquibase.resource.FileSystemResourceAccessor;
+import liquibase.resource.ResourceAccessor;
 import org.example.user.repository.training.model.User;
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -9,10 +18,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.sql.*;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,7 +49,7 @@ public class UserRepositoryImplTest {
     static void startContainer() {
         container.start();
         dataSource = createDataSource(container);
-        createTable(dataSource);
+        applyMigrations(dataSource);
         repository = new UserRepositoryImpl(dataSource);
     }
 
@@ -66,7 +76,7 @@ public class UserRepositoryImplTest {
         truncateTable(dataSource);
         saveUser(dataSource, user);
 
-        Optional<User> loadedUser = repository.load(1);
+        Optional<User> loadedUser = repository.load(USER_ID);
 
         assertEquals(Optional.of(user), loadedUser);
     }
@@ -99,12 +109,22 @@ public class UserRepositoryImplTest {
         return new HikariDataSource(config);
     }
 
-    private static void createTable(DataSource dataSource) {
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE IF NOT EXISTS " + USER_TABLE_NAME + " (id SERIAL PRIMARY KEY, name VARCHAR(255))");
-        } catch (Exception e) {
-            throw new RuntimeException("Error creating table", e);
+    private static void applyMigrations(DataSource dataSource) {
+        try (Connection connection = dataSource.getConnection()) {
+            String projectRoot = Paths.get("").toAbsolutePath().toString();
+            ResourceAccessor resourceAccessor = new DirectoryResourceAccessor(new File(projectRoot));
+            Liquibase liquibase = new Liquibase(
+                "db/changelog/db.changelog-master.yaml",
+                resourceAccessor,
+                new JdbcConnection(connection)
+            );
+            liquibase.update("");
+        } catch (SQLException e) {
+            throw new RuntimeException("Error connecting to database", e);
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException("Failed to find migration file", e);
+        } catch (LiquibaseException e) {
+            throw new RuntimeException("Failed to apply migrations", e);
         }
     }
 
@@ -112,38 +132,38 @@ public class UserRepositoryImplTest {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
             statement.execute("TRUNCATE TABLE " + USER_TABLE_NAME);
-        } catch (Exception e) {
-            throw new RuntimeException("Error truncating table", e);
-        }
-    }
-
-    private static Optional<User> getUser(DataSource dataSource, int id) {
-
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("SELECT id, name FROM " + USER_TABLE_NAME + " WHERE id = ?")) {
-            statement.setInt(1, id);
-
-            ResultSet resultSet = statement.executeQuery();
-            if (resultSet.next()) {
-                return Optional.of(new User(resultSet.getInt("id"), resultSet.getString("name")));
-            } else {
-                return Optional.empty();
-            }
-        } catch (Exception e) {
+        } catch (SQLException e) {
             throw new RuntimeException("Error truncating table", e);
         }
     }
 
     private static void saveUser(DataSource dataSource, User user) {
         try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("INSERT INTO " + USER_TABLE_NAME + " (id, name) VALUES (?, ?)")) {
+             PreparedStatement statement = connection.prepareStatement(
+                 "INSERT INTO " + USER_TABLE_NAME + " (id, name) VALUES (?, ?)")) {
             statement.setInt(1, user.getId());
             statement.setString(2, user.getName());
             if (statement.executeUpdate() < 1) {
-                throw new RuntimeException("Error saving user");
+                throw new RuntimeException("User with id " + user.getId() + " already exists");
             }
-        } catch (Exception e) {
-            throw new RuntimeException("Error truncating table", e);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to save user", e);
+        }
+    }
+
+    private static Optional<User> getUser(DataSource dataSource, int id) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                 "SELECT id, name FROM " + USER_TABLE_NAME + " WHERE id = ?")) {
+            statement.setInt(1, id);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                return Optional.of(new User(resultSet.getInt("id"), resultSet.getString("name")));
+            } else {
+                return Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to load user with ID " + id, e);
         }
     }
 }
