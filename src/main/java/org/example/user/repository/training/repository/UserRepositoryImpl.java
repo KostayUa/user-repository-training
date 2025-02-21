@@ -34,7 +34,7 @@ public class UserRepositoryImpl implements UserRepository {
             if (resultSet.next()) {
                 return Optional.of(new User(resultSet.getInt("id"), resultSet.getString("name")));
             } else {
-                return Optional.empty(); //if User not found(can't be null)
+                return Optional.empty();
             }
         } catch (SQLException e) {
             throw new RuntimeException("Error loading user", e);
