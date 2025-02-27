@@ -3,3 +3,5 @@ databaseChangeLog:
       file: db/changelog/changeset/v.1-create-user-table.yaml
   - include:
       file: db/changelog/changeset/v.2-insert-user.yaml
+  - include:
+      file: db/changelog/changeset/v.3-add-email-column.yaml
