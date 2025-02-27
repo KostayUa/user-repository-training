@@ -7,6 +7,7 @@ import liquibase.database.jvm.JdbcConnection;
 import liquibase.exception.LiquibaseException;
 import liquibase.resource.DirectoryResourceAccessor;
 import liquibase.resource.ResourceAccessor;
+import org.example.user.repository.training.model.Email;
 import org.example.user.repository.training.model.User;
 import org.junit.jupiter.api.*;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -14,7 +15,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import javax.sql.DataSource;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.nio.file.Paths;
 import java.sql.*;
@@ -37,7 +37,7 @@ public class UserRepositoryImplTest {
         .withPassword("test");
 
     private static UserRepositoryImpl repository;
-    private static final User user = new User(USER_ID, "Костя");
+    private static final User user = new User(USER_ID, "Костя", Email.create("kos@gmail.com"));
     private static DataSource dataSource;
 
     @BeforeAll
@@ -106,8 +106,7 @@ public class UserRepositoryImplTest {
 
     private static void applyMigrations(DataSource dataSource) {
         try (Connection connection = dataSource.getConnection()) {
-            String projectRoot = Paths.get("").toAbsolutePath().toString();
-            ResourceAccessor resourceAccessor = new DirectoryResourceAccessor(new File(projectRoot));
+            ResourceAccessor resourceAccessor = new DirectoryResourceAccessor(Paths.get("."));
             Liquibase liquibase = new Liquibase(
                 "db/changelog/db.changelog-master.yaml",
                 resourceAccessor,
@@ -115,7 +114,7 @@ public class UserRepositoryImplTest {
             );
             liquibase.update("");
         } catch (SQLException e) {
-            throw new RuntimeException("Error connecting to database", e);
+            throw new RuntimeException("Database operation failed", e);
         } catch (FileNotFoundException e) {
             throw new RuntimeException("Failed to find migration file", e);
         } catch (LiquibaseException e) {
@@ -135,9 +134,10 @@ public class UserRepositoryImplTest {
     private static void saveUser(DataSource dataSource, User user) {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                 "INSERT INTO " + USER_TABLE_NAME + " (id, name) VALUES (?, ?)")) {
+                 "INSERT INTO " + USER_TABLE_NAME + " (id, name, email) VALUES (?, ?, ?)")) {
             statement.setInt(1, user.getId());
             statement.setString(2, user.getName());
+            statement.setString(3, user.getEmail().getValue());
             if (statement.executeUpdate() < 1) {
                 throw new RuntimeException("User with id " + user.getId() + " already exists");
             }
@@ -149,11 +149,17 @@ public class UserRepositoryImplTest {
     private static Optional<User> getUser(DataSource dataSource, int id) {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                 "SELECT id, name FROM " + USER_TABLE_NAME + " WHERE id = ?")) {
+                 "SELECT * FROM " + USER_TABLE_NAME + " WHERE id = ?")) {
             statement.setInt(1, id);
             ResultSet resultSet = statement.executeQuery();
             if (resultSet.next()) {
-                return Optional.of(new User(resultSet.getInt("id"), resultSet.getString("name")));
+                return Optional.of(
+                    new User(
+                        resultSet.getInt("id"),
+                        resultSet.getString("name"),
+                        Email.create(resultSet.getString("email"))
+                    )
+                );
             } else {
                 return Optional.empty();
             }
